@@ -1,6 +1,6 @@
 # GLOTREC Cat
 #### [Romina De León](rdeleon@conicet.gov.ar)
-### [Gimena del Rio Riande](gdelrio@conicet.gov.ar)
+#### [Gimena del Rio Riande](gdelrio@conicet.gov.ar)
 #### [HD LAB CONICET](https://hdlab.space/)
 #### [https://rominicky.github.io/](https://rominicky.github.io/)
 
