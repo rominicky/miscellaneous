@@ -1,0 +1,1014 @@
+---
+title: "Exploring GLOTREC catalogue"
+date: last-modified
+format:
+  html:
+    theme: cosmo             
+    toc: true                
+    toc-depth: 3             
+    toc-location: left       
+    number-sections: false
+    code-fold: true         
+    code-tools: true         
+    embed-resources: true    
+    fig-width: 14
+    fig-height: 11            
+execute:
+  warning: false             
+  message: false             
+---
+
+#### [Gimena del Rio](gdelrio.riande@gmail.com) & [Romina De León](rdeleon@conicet.gov.ar)
+
+#### ([HDLAB CONICET](https://hdlab.space/))
+
+#### Notebook designed and maintained by Romina De León
+
+### Goals:
+
+-   Download data from the [GLOTREC repository](https://itbc.gei.de/)
+-   Standardize and export the dataset for exploration and analysis
+-   Clean and prepare **GLOTREC** data related to **Argentine Textbooks**
+-   Exploring data and relationship between:
+    -   Authors and Publisher
+    -   Publisher and School Subjects
+    -   Publisher, Authors, School Subjects
+-   Work on similar visualizations as the ones that can be found nowadays in GLOTREC, though improved with a focus on specific periods.
+
+### Libraries to use
+
+Description:
+
+-   `tidyverse`: for data importing, cleaning, transformation, wrangling, and tabular representation; includes dplyr, tidyr, readr, purrr, stringr, and ggplot2.
+
+-   `stringr / stringi`: for text normalization, pattern detection, string manipulation, and removing diacritics.
+
+-   `ggplot2`: for statistical and exploratory data visualization.
+
+-   `treemapify`: for treemap visualizations integrated with ggplot2.
+
+-   `igraph`: for analyzing network structures, computing centrality measures, clustering, and other graph-theoretic operations.
+
+-   `readr`: for fast reading of CSV, TSV, and delimited files (also part of tidyverse).
+
+-   `maps`: for base map datasets (useful fallback for quick geospatial outlines).
+
+### Installation of packages if not already installed, and call of necessary libraries
+
+```{r}
+
+#| include: false
+# Only needed once to install packages
+rm(list = ls())
+required_packages <- c(
+  "tidyverse",
+  "tidytext",
+  "treemapify",
+  "dplyr",
+  "ggplot2",
+  "ggiraph",
+  "purrr",
+  "stringr",
+  "readr",
+  "readxl",
+  "viridis",
+  "plotly",
+  "RColorBrewer",
+  "htmltools"
+)
+
+packages_to_install <- required_packages[!(required_packages %in% installed.packages()[,"Package"])]
+
+if(length(packages_to_install) > 0) {
+  cat("Instalando paquetes faltantes:", paste(packages_to_install, collapse = ", "), "\n")
+  install.packages(packages_to_install, dependencies = TRUE)
+} else {
+  cat("Todos los paquetes necesarios ya están instalados.\n")
+}
+
+invisible(lapply(required_packages, library, character.only = TRUE))
+cat("✔ Todas las librerías fueron cargadas correctamente.\n")
+```
+
+### Read the downloaded Excel file and display first rows
+
+```{r}
+df <- read_excel("data/itbc_export_2025.xlsx", 
+    col_types = c("text"))  %>%
+      select(!starts_with("Unnamed")) %>%
+      mutate(Year = as.numeric(Year))
+
+glimpse(df) #show df information
+
+df %>% sample_n(5) # show random rows
+
+```
+
+### Normalization of the **Publisher** column
+
+-   Clean up spaces and convert to lowercase
+-   Normalization publishers with a mapping dictionary
+-   Apply normalization in **Publisher** column
+
+```{r}
+df <- df %>%
+  mutate(
+    Publisher = str_trim(Publisher) |> str_to_lower(),
+    Publisher = case_when(
+      Publisher %in% c("a-z editora", "a-z ed.", "az editora") ~ "A-Z Editora",
+      Publisher %in% c("estrada", "estrada secundaria", "angel estrada & cía.s.a.-editores") ~ "Estrada",
+      Publisher %in% c("puerto de palos s.a. casa de édiciones", "puerto de palos") ~ "Puerto de Palos",
+      Publisher %in% c("aique primaria", "aique secundaria", "aique") ~ "Aique",
+      Publisher %in% c("kapelusz", "ed. kapelusz", "kapelusz norma") ~ "Kapelusz",
+      Publisher %in% c("tinta fresca") ~ "Tinta Fresca",
+      Publisher %in% c("doce orcas ediciones", "doce orcas ed.", "doce orcas") ~ "Doce Orcas",
+      Publisher %in% c("ed. stella") ~ "Stella",
+      Publisher %in% c("ed. atlántida") ~ "Atlántida",
+      Publisher %in% c("losada") ~ "Losada",
+      Publisher %in% c("ed. troquel") ~ "Troquel",
+      Publisher %in% c("imprenta mercur") ~ "Mercur",
+      Publisher %in% c("imprenta de pablo e. coni, especial para obras", "coni") ~ "Coni",
+      Publisher %in% c("igon", "igón") ~ "Igon",
+      Publisher %in% c("goethe-inst.") ~ "Goethe-Institut",
+      Publisher %in% c("cesarini", "cesarini hnos. ed.") ~ "Cesarini",
+      Publisher %in% c("producciones mawis") ~ "Mawis",
+      Publisher %in% c("editorial h.m.e.") ~ "HME",
+      Publisher %in% c(
+        "imprenta y librería de mayo"
+      ) ~ "Librería de Mayo",
+      Publisher %in% c(
+        "librería del colegio, alsina y bolívar",
+        "cabaut, librería del colegio",
+        "alsina & bolívar, librería del colegio",
+        "librería del colegio"
+      ) ~ "Librería del Colegio",
+      Publisher %in% c("ed. crespillo", "f. crespillo", "f. crespillo editor") ~ "Crespillo",
+      Publisher %in% c("ed. peuser", "peuser") ~ "Peuser",
+      TRUE ~ Publisher
+    ),
+    Publisher = str_to_title(Publisher)
+  )
+```
+
+### Create a function to normalize author names according to specified rules
+
+```         
+1. Remove accents and extra spaces
+2. If there's a comma, we assume "Last, First" format
+3. If last name has multiple parts, keep them together
+4. Select only the first given name
+5. Rebuild normalized name
+6. If no comma, just title case the whole name
+```
+
+Apply function to **Authors** column
+
+```{r}
+
+normalizar_autor <- function(nombre) {
+  if (is.na(nombre) || !is.character(nombre) || str_trim(nombre) == "") {
+    return(NA_character_)
+    }
+
+    # remove accents and extra spaces
+    nombre <- nombre |>
+      str_trim() |>
+      #stri_trans_general ("Latin-ASCII") |>
+      str_squish()
+
+    # If there's a comma, we assume "Last, First" format
+    if (str_detect(nombre, ",")) {
+      partes <- str_split(nombre, ",", n = 2)[[1]]
+      apellido <- partes[1] |> str_trim() |> str_squish()
+      resto <- partes[2] |> str_trim()
+
+      # select only the first given name
+      primer_nombre <- if (resto == "") "" else str_split(resto, "\\s+")[[1]][1]
+
+      # rebuild normalized name
+      nombre_norm <- paste0(str_to_title(apellido), ", ", str_to_title(primer_nombre))
+      } else {
+      # if no comma, just title case the whole name
+       nombre_norm <- str_to_title(nombre)
+}
+    return(str_trim(nombre_norm))
+}
+
+# Apply function to authors column ---
+
+df <- df %>%
+  mutate(
+    Authors = as.character(Authors),
+    Authors = Authors |> 
+      replace_na("") |>                        # complete NA with empty string
+      str_split("\\|") |>                      # separate  |
+      purrr::map(~ .x[.x != ""]) |>                   # delete 
+      purrr::map(~ map_chr(.x, normalizar_autor))     # apply function
+  )
+
+
+```
+
+### Graph Section
+
+#### 1. Graph Publishers by Number of Books
+
+```{r}
+
+a <- df %>% 
+  count(Publisher, sort = TRUE) %>% 
+  mutate(Publisher = stringr::str_wrap(Publisher, width = 30)) %>%
+          slice_head(n = 25) %>%
+  ggplot(aes(x = reorder(Publisher, n), 
+                y = n,
+                fill = n,
+                tooltip = paste0(
+                  Publisher, "<br>",
+                  "Count: ", n),
+                data_id = Publisher)) +
+  geom_col_interactive(color = "white", linewidth = 0.1,
+    show.legend = FALSE ) + #, na.rm = TRUE) +
+  scale_fill_viridis_c_interactive(option = "viridis") +
+  coord_flip() +
+  labs(
+    title = "Top 25 Publishers by Count",
+    x = "Publisher",
+    y = "Count"
+  ) + 
+  guides(fill = "none") +
+  theme_light() +
+  theme(
+    axis.text.y = element_text(size = 8),
+    panel.grid.minor = element_blank()
+  )
+
+htmltools::div(style = "width:100%; height:400px;",
+  girafe(
+  ggobj = a,
+  width_svg = 10,
+  height_svg = 6,
+  options = list(
+    opts_sizing(rescale = TRUE),
+    opts_hover(css = "fill:orange;cursor:pointer;"))
+))
+```
+
+#### 2. Graph Publishers by Number of Books and Level of Education
+
+```{r}
+
+p1 <- df %>%
+  group_by(`Level of Education`, `Document Type`, `Publisher`) %>%
+  summarise(Books_Count = n(), .groups = "drop") %>%
+  filter(Books_Count > 3) %>%
+  mutate(Publisher = reorder(Publisher, Books_Count)) %>%
+ggplot(aes(x = Books_Count, 
+                         y = Publisher, 
+                         fill = Publisher,
+                         tooltip = paste0(Publisher, ": ", Books_Count),
+                         data_id = Publisher)) +
+  geom_col_interactive(show.legend = FALSE, color = "gray", size = 0.2) +
+  facet_wrap(~`Level of Education`, ncol = 2, scales = "free") +
+  scale_fill_brewer(palette = "Set3") + 
+  labs(x = "Books Count", y = "Publisher") +
+  theme_minimal() +
+  theme(
+    panel.grid.major.y = element_blank(), 
+    panel.grid.minor = element_blank(),
+    panel.border = element_rect(color = "lightgray", fill = NA),
+    strip.text = element_text(face = "bold", size = 11),
+    axis.text.y = element_text(size = 9),
+    axis.text.x = element_text(size = 8),
+    plot.background = element_rect(fill = "white", color = NA)
+  )
+
+
+htmltools::div(style = "width:100%; height:400px;",
+      girafe(ggobj = p1, 
+       options = list(
+         opts_hover(css = "fill:orange;stroke:black;"), 
+         opts_toolbar(saveaspng = FALSE)
+       ),
+       width_svg = 9, height_svg = 5.5))
+```
+
+#### 3. Heatmap of Publishers vs School Subjects
+
+```{r}
+
+p2 <- df %>%
+  separate_rows(Publisher, sep = ", ") %>% 
+  filter(`School Subject` != "German taught in non-German-speaking countries") %>%
+  count(`School Subject`, Publisher) %>%
+  mutate(n_masked = ifelse(n <= 3, NA, n)) %>%
+ggplot(aes(x = Publisher, y = `School Subject`, fill = n_masked)) +
+  geom_tile_interactive(aes(
+    tooltip = paste0("Subject: ", `School Subject`, "<br>",
+                     "Publisher: ", Publisher, "<br>",
+                     "Count: ", n),
+    data_id = Publisher),
+    color = "white", linewidth = 0.5,
+    show.legend = FALSE ) +
+  scale_fill_distiller(palette = "YlGnBu", direction = 1, na.value = "white", name = "Books Count") +
+  labs(
+    title = "Count of Books by Publisher and Subject",
+    x = "Publisher",
+    y = "School Subject"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(size = 14, face = "bold", hjust = 0.5, margin = margin(b=20)),
+    axis.text.x = element_text(angle = 60, hjust = 1, size = 10),
+    axis.text.y = element_text(size = 10),
+    panel.grid = element_blank())
+
+htmltools::div(style = "width:100%; height:400px;",
+girafe(
+  ggobj = p2,
+  width_svg = 12,
+  height_svg = 7,
+  options = list(
+    opts_sizing(rescale = TRUE),
+    opts_hover(css = "stroke:black;stroke-width:2px;")
+  )
+))
+```
+
+#### 4. Histgram of books by Year and Publisher
+
+```{r}
+
+p3 <- df %>%
+  drop_na(Year) %>%
+  separate_rows(Publisher, sep = ", ") %>%
+  filter(Publisher %in% (count(., Publisher, sort = TRUE) %>% 
+    slice_head(n = 25) %>% 
+    pull(Publisher)
+  )) %>%
+  ggplot(aes(x = Year, fill = Publisher, data_id = Publisher)) +
+  geom_histogram_interactive(aes(tooltip = after_stat(paste0("Publisher: ",
+                                                             fill, "<br>",
+                                                             "Year: ", round(x), "<br>",
+                                                             "Count: ", count))),
+    bins = 40, 
+    position = "stack", 
+    color = "white", 
+    linewidth = 0.1,
+    show.legend = FALSE 
+  ) +
+  scale_fill_manual(values = c(brewer.pal(12, "Paired"), 
+                               brewer.pal(8, "Dark2"), 
+                               brewer.pal(5, "Set1"))) +
+  labs(
+    title = "Distribution of Books by Year and Publisher (before 1900)",
+    x = "Year of Publication",
+    y = "Book Count"
+  ) +
+  theme_minimal() +
+  theme(
+    panel.grid.minor = element_blank(),
+    plot.title = element_text(hjust = 0.5, face = "bold")
+  )
+
+htmltools::div(style = "width:100%; height:400px;",
+girafe(
+  ggobj = p3,
+  width_svg = 12,
+  height_svg = 7,
+  options = list(
+    opts_sizing(rescale = TRUE),
+    opts_hover(css = "opacity:1;stroke:black;stroke-width:2px;"),
+    opts_hover_inv(css = "opacity:0.3;") 
+  )
+))
+```
+
+#### 5. Heatmap of Publishers vs Level of Education
+
+```{r}
+
+
+p4 <- df %>% 
+  mutate(`Level of Education` = str_split_i(replace_na(`Level of Education`, ""), "\\|", 1)) %>% 
+  separate_rows(Publisher, sep = ", ") %>% 
+  count(`Level of Education`, Publisher) %>%
+  filter(n >= 4) %>%
+  ggplot(aes(x = Publisher, y = `Level of Education`, fill = n)) +
+  geom_tile_interactive(aes(
+    tooltip = paste0("Publisher: ", Publisher, "<br>",
+                     "Level of Education: ", `Level of Education`, "<br>",
+                     "Books Count: ", n),
+    data_id = Publisher
+    ),
+    color = "white", linewidth = 0.5,
+    show.legend = FALSE) + 
+  scale_fill_distiller(palette = "YlGnBu", direction = 1, name = "Books Count") +
+  labs(
+    title = "Count of Books by Publisher and Level of Education",
+    x = "Publisher",
+    y = "Level of Education"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(size = 14, face = "bold", hjust = 0.5, margin = margin(b=20)),
+    axis.text.x = element_text(angle = 60, hjust = 1, size = 11),
+    axis.text.y = element_text(size = 11),
+    panel.grid = element_blank()
+  )
+
+htmltools::div(style = "width:100%; height:400px;",
+girafe(
+  ggobj = p4,
+  width_svg = 14,
+  height_svg = 8,
+  options = list(
+    opts_sizing(rescale = TRUE),
+    opts_hover(css = "stroke:black;stroke-width:2px;")
+  )
+))
+```
+
+#### 6. Heatmap of Publishers vs Document Type
+
+```{r}
+p5 <- df %>% 
+  mutate(`Document Type` = str_split_i(replace_na(`Document Type`, ""), "\\|", 1)) %>% 
+  separate_rows(Publisher, sep = ", ") %>% 
+  count(`Document Type`, Publisher) %>%
+  filter(n >= 4) %>%
+  ggplot(aes(x = Publisher, y = `Document Type`, fill = n)) +
+  geom_tile_interactive(aes(
+    tooltip = paste0("Publisher: ", Publisher, "<br>",
+                     "Document Type: ", `Document Type`, "<br>",
+                     "Books Count: ", n),
+    data_id = Publisher
+    ),
+    color = "white", linewidth = 0.5,
+    show.legend = FALSE) + 
+  scale_fill_distiller(palette = "YlGnBu", direction = 1, name = "Books Count") +
+  labs(
+    title = "Count of Books by Publisher and Document Type",
+    x = "Publisher",
+    y = "Document Type"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(size = 14, face = "bold", hjust = 0.5, margin = margin(b=20)),
+    axis.text.x = element_text(angle = 60, hjust = 1, size = 11),
+    axis.text.y = element_text(size = 11),
+    panel.grid = element_blank()
+  )
+
+htmltools::div(style = "width:100%; height:400px;",
+girafe(
+  ggobj = p5,
+  width_svg = 14,
+  height_svg = 8,
+  options = list(
+    opts_sizing(rescale = TRUE),
+    opts_hover(css = "stroke:black;stroke-width:2px;")
+  )
+))
+```
+
+#### 7. Collaboration Patterns between Publishing Houses and Researchers via Sankey Flow
+
+```{r}
+
+p6 <- df %>%
+  unnest(Authors) %>%
+  filter(!is.na(Authors), Authors != "") %>%
+  count(Publisher, Authors, name = "value") %>%
+  filter(value >= 2) %>%
+  
+  # Sankey
+  {
+    d <- .
+    
+    # Nodes
+    nodes_names <- unique(c(d$Publisher, d$Authors))
+    nodes <- data.frame(name = nodes_names)
+    
+    links <- d %>%
+      mutate(
+        source = match(Publisher, nodes$name) - 1,
+        target = match(Authors, nodes$name) - 1
+      )
+    
+    pubs_count <- length(unique(d$Publisher))
+    auths_count <- length(unique(d$Authors))
+    
+    plot_ly(
+      type = "sankey",
+      orientation = "h",
+      node = list(
+        label = nodes$name,
+        pad = 15,
+        thickness = 15,
+        line = list(color = "white", width = 0.5),
+        color = c(rep("#4C72B0", pubs_count), rep("#9909A9", auths_count))
+      ),
+      link = list(
+        source = links$source,
+        target = links$target,
+        value = links$value,
+        color = "rgba(150,150,150,0.3)"
+      )
+    ) %>%
+      layout(
+        autosize = TRUE,
+        margin = list(l = 50, r = 50, t = 80, b = 40),
+        title = list(
+          text = paste0("Flow of Publications between Publishers and Authors<br>",
+                        "<sup>", pubs_count, " publishers — ", auths_count, " authors</sup>"),
+          font = list(size = 14)
+        ),
+        font = list(size = 10),
+        height = 800
+      )
+  } %>% 
+  htmltools::div(style = "width:100%; height:800px;")
+
+p6
+```
+
+#### 8. Alluvial plot of Publishers vs Authors for decades
+
+```{r}
+
+p7 <- df %>%
+  unnest(Authors) %>%  
+  filter(Year >= 1860, Year < 1900) %>%
+  count(Publisher, Authors, name = "count") %>%
+  filter(Authors != "", !is.na(Authors)) %>%
+  filter(count >= 1) %>%
+
+  plot_ly(
+    type = 'parcats',
+    dimensions = list(
+      list(label = 'Publisher', values = ~Publisher),
+      list(label = 'Author', values = ~Authors)
+    ),
+    line = list(
+      color = ~count,
+      colorscale = 'Viridis',
+      showscale = FALSE
+    ),
+    hoveron = 'dimension',
+    hoverinfo = 'count+probability'
+  ) %>%
+  
+  layout(
+    title = list(
+      text = "<b>Publisher–Author Collaborations (1860–1900)</b>",
+      x = 0.5,
+      xanchor = 'center',
+      font = list(size = 14, family = 'Arial Black')
+    ),
+    font = list(size = 11, family = 'Arial'),
+    paper_bgcolor = 'white',
+    plot_bgcolor = 'white',
+    margin = list(l = 80, r = 80, t = 100, b = 50),
+    height = 700
+  ) %>%
+
+  htmltools::div(style = "width:100%; height:750px; overflow:hidden;")
+p7
+```
+
+```{r}
+
+p8 <- df %>%
+  unnest(Authors) %>%  
+  filter(Year >= 1901, Year < 1950) %>% 
+  count(Publisher, Authors, name = "count") %>%
+  filter(Authors != "", !is.na(Authors)) %>%
+
+  plot_ly(
+    type = 'parcats',
+    dimensions = list(
+      list(label = 'Publisher', values = ~Publisher),
+      list(label = 'Author', values = ~Authors)
+    ),
+    line = list(
+      color = ~count,
+      colorscale = 'Viridis',
+      showscale = FALSE,
+      shape = 'hspline'
+    ),
+    hoveron = 'category',
+    hoverinfo = 'count+probability+text'
+  ) %>%
+  
+  layout(
+    title = list(
+      text = "<b>Publisher–Author Collaborations (1901–1950)</b>",
+      x = 0.5,
+      xanchor = 'center',
+      font = list(size = 14, family = 'Arial Black')
+    ),
+    font = list(size = 11, family = 'Arial'),
+    paper_bgcolor = 'white',
+    plot_bgcolor = 'white',
+    margin = list(l = 80, r = 80, t = 100, b = 50),
+    height = 700
+  ) %>%
+
+  htmltools::div(style = "width:100%; height:750px; overflow:hidden;")
+p8
+```
+
+```{r}
+
+p9 <- df %>%
+  unnest(Authors) %>%  
+  filter(Year >= 1951, Year < 1980) %>% 
+  count(Publisher, Authors, name = "count") %>%
+  filter(count >= 2) %>%
+  filter(Authors != "", !is.na(Authors)) %>%
+ 
+  plot_ly(
+    type = 'parcats',
+    dimensions = list(
+      list(label = 'Publisher', values = ~Publisher),
+      list(label = 'Author', values = ~Authors)
+    ),
+    line = list(
+      color = ~count,
+      colorscale = 'Viridis',
+      showscale = FALSE,
+      shape = 'hspline'
+    ),
+    hoveron = 'category',
+    hoverinfo = 'count+probability+text'
+  ) %>%
+  
+  layout(
+    title = list(
+      text = "<b>Publisher–Author Collaborations (Two or more Publications, 1951–1980)</b>",
+      x = 0.5,
+      xanchor = 'center',
+      font = list(size = 14, family = 'Arial Black')
+    ),
+    font = list(size = 11, family = 'Arial'),
+    paper_bgcolor = 'white',
+    plot_bgcolor = 'white',
+    margin = list(l = 80, r = 80, t = 100, b = 50),
+    height = 800
+  ) %>%
+
+  htmltools::div(style = "width:100%; height:850px; overflow:hidden;")
+p9
+```
+
+```{r}
+p10 <- df %>%
+  unnest(Authors) %>%  
+  filter(Year >= 1981, Year < 2000) %>% 
+  count(Publisher, Authors, name = "count") %>%
+  filter(count >= 2) %>%
+  filter(Authors != "", !is.na(Authors)) %>%
+
+  plot_ly(
+    type = 'parcats',
+    dimensions = list(
+      list(label = 'Publisher', values = ~Publisher),
+      list(label = 'Author', values = ~Authors)
+    ),
+    line = list(
+      color = ~count,
+      colorscale = 'Viridis',
+      showscale = FALSE,
+      shape = 'hspline'
+    ),
+    hoveron = 'category',
+    hoverinfo = 'count+probability+text'
+  ) %>%
+  
+  layout(
+    title = list(
+      text = "<b>Publisher–Author Collaborations (Two or more Publications, 1981–2000)</b>",
+      x = 0.5,
+      xanchor = 'center',
+      font = list(size = 14, family = 'Arial Black')
+    ),
+    font = list(size = 11, family = 'Arial'),
+    paper_bgcolor = 'white',
+    plot_bgcolor = 'white',
+    margin = list(l = 80, r = 80, t = 100, b = 50),
+    height = 800
+  ) %>%
+
+  htmltools::div(style = "width:100%; height:850px; overflow:hidden;")
+p10
+```
+
+```{r}
+p11 <- df %>%
+  unnest(Authors) %>%  
+  filter(Year >= 2001, Year < 2010) %>% 
+  count(Publisher, Authors, name = "count") %>%
+  filter(count >= 2) %>%
+  filter(Authors != "", !is.na(Authors)) %>%
+
+  plot_ly(
+    type = 'parcats',
+    dimensions = list(
+      list(label = 'Publisher', values = ~Publisher ),
+      list(label = 'Author', values = ~Authors)
+    ),
+    line = list(
+      color = ~count,
+      colorscale = 'Viridis',
+      showscale = FALSE,
+      shape = 'hspline'
+    ),
+    hoveron = 'category',
+    hoverinfo = 'count+probability+text'
+  ) %>%
+  
+  layout(
+    title = list(
+      text = "<b>Publisher–Author Collaborations (Two or more Publications, 2001–2010)</b>",
+      x = 0.5,
+      xanchor = 'center',
+      font = list(size = 14, family = 'Arial Black')
+    ),
+    font = list(size = 11, family = 'Arial'),
+    paper_bgcolor = 'white',
+    plot_bgcolor = 'white',
+    margin = list(l = 80, r = 80, t = 100, b = 50),
+    height = 800
+  ) %>%
+
+  htmltools::div(style = "width:100%; height:850px;")
+p11
+```
+
+```{r}
+
+p12 <- df %>%
+  unnest(Authors) %>%  
+  filter(Year >= 2011) %>% 
+  count(Publisher, Authors, name = "count") %>%
+  filter(count >= 2) %>%
+  filter(Authors != "", !is.na(Authors)) %>%
+
+  plot_ly(
+    type = 'parcats',
+    dimensions = list(
+      list(label = 'Publisher', values = ~Publisher ),
+      list(label = 'Author', values = ~Authors)
+    ),
+    line = list(
+      color = ~count,
+      colorscale = 'Viridis',
+      showscale = FALSE,
+      shape = 'hspline'
+    ),
+    hoveron = 'category',
+    hoverinfo = 'count+probability+text'
+  ) %>%
+  
+  layout(
+    title = list(
+      text = "<b>Publisher–Author Collaborations (Two or more Publications, since 2011)</b>",
+      x = 0.5,
+      xanchor = 'center',
+      font = list(size = 14, family = 'Arial Black')
+    ),
+    font = list(size = 11, family = 'Arial'),
+    paper_bgcolor = 'white',
+    plot_bgcolor = 'white',
+    margin = list(l = 80, r = 80, t = 100, b = 50),
+    height = 800
+  ) %>%
+
+  htmltools::div(style = "width:100%; height:850px;")
+p12
+```
+
+#### 9. Relationship between School Subjects and Authors
+
+```{r}
+
+p13 <-  df %>%
+  unnest(Authors) %>% 
+  filter(`School Subject` != "German taught in non-German-speaking countries") %>% 
+  count(`School Subject`, Authors, name = "count") %>%
+  filter(count >= 3) %>%
+  filter(Authors != "", !is.na(Authors)) %>%
+  mutate(n_masked = ifelse(count <= 3, NA, count)) %>% 
+  
+ggplot(aes(x = Authors, y = `School Subject`, fill = n_masked)) +
+  geom_tile_interactive(aes(
+    tooltip = paste0("School Subject: ", `School Subject`, "<br>",
+                     "Authors: ", Authors, "<br>",
+                     "Count: ", count),
+    data_id = Authors),
+    color = "white", linewidth = 0.5,
+    show.legend = FALSE ) +
+  scale_fill_distiller(palette = "YlGnBu", direction = 1, na.value = "white", name = "Books Count") +
+  labs(
+    title = "Count of Books by Authors and School Subject (authors with four or more books)",
+    x = "Authors",
+    y = "School Subject"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(size = 14, face = "bold", hjust = 0.5, margin = margin(b=20)),
+    axis.text.x = element_text(angle = 60, hjust = 1, size = 10),
+    axis.text.y = element_text(size = 10),
+    panel.grid = element_blank())
+
+htmltools::div(style = "width:100%; height:400px;",
+girafe(
+  ggobj = p13,
+  width_svg = 12,
+  height_svg = 7,
+  options = list(
+    opts_sizing(rescale = TRUE),
+    opts_hover(css = "stroke:black;stroke-width:2px;")
+  )
+))
+```
+
+#### 10. Time series of book counts by authors
+
+```{r}
+
+               
+p14 <- df %>%
+  unnest(Authors) %>%
+  filter(Year >= 1860 & Year <= 1950) %>%
+  add_count(Authors, `School Subject`) %>%
+  filter(n >= 2) %>%
+  
+  
+  ggplot(aes(x = Year, 
+             y = reorder(Authors, Year), 
+             color = `School Subject`)) +
+  geom_point_interactive(aes(
+    tooltip = paste0("Author: ", Authors, "\n",
+                    "Year: ", Year, "\n",
+                    "Total in ", `School Subject`, ": ", n),
+    data_id = Authors 
+    
+  ), size = 4, alpha = 0.7) +
+  
+  theme_minimal() +
+  labs(title = "Publication timeline by author (1860-1950)",
+       subtitle = "Includes authors with at least two publications",
+       x = "Year", y = "Author") +
+  theme(axis.text.y = element_text(size = 10))
+
+htmltools::div(style = "width:100%; height:400px;",
+girafe(ggobj = p14, 
+       options = list(
+         opts_hover(css = "fill:orange;stroke:black;cursor:pointer;"),
+         opts_hover_inv(css = "opacity:0.2;"),
+         opts_toolbar(saveaspng = TRUE)
+       ),
+       width_svg = 10, height_svg = 8))
+```
+
+```{r}
+
+p15 <- df %>%
+  unnest(Authors) %>%
+  filter(Year >= 1951 & Year <= 1980) %>%
+  add_count(Authors, `School Subject`) %>%
+  filter(n >= 2) %>%
+  
+  
+  ggplot(aes(x = Year, 
+             y = reorder(Authors, Year), 
+             color = `School Subject`)) +
+  geom_point_interactive(aes(
+    tooltip = paste0("Author: ", Authors, "\n",
+                    "Year: ", Year, "\n",
+                    "Total in ", `School Subject`, ": ", n),
+    data_id = Authors 
+    
+  ), size = 4, alpha = 0.7) +
+  
+  theme_minimal() +
+  labs(title = "Publication timeline by author (1951-1980)",
+       subtitle = "Includes authors with at least two publications",
+       x = "Year", y = "Author") +
+  theme(axis.text.y = element_text(size = 10))
+
+htmltools::div(style = "width:100%; height:400px;",
+girafe(ggobj = p15, 
+       options = list(
+         opts_hover(css = "fill:orange;stroke:black;cursor:pointer;"),
+         opts_hover_inv(css = "opacity:0.2;"),
+         opts_toolbar(saveaspng = TRUE)
+       ),
+       width_svg = 10, height_svg = 8))
+```
+
+```{r}
+
+p20 <- df %>%
+  unnest(Authors) %>%
+  filter(Year >= 1981 & Year <= 2000) %>%
+  add_count(Authors, `School Subject`) %>%
+  filter(n >= 2) %>%
+  
+  
+  ggplot(aes(x = Year, 
+             y = reorder(Authors, Year), 
+             color = `School Subject`)) +
+  geom_point_interactive(aes(
+    tooltip = paste0("Author: ", Authors, "\n",
+                    "Year: ", Year, "\n",
+                    "Total in ", `School Subject`, ": ", n),
+    data_id = Authors 
+    
+  ), size = 4, alpha = 0.7) +
+  
+  theme_minimal() +
+  labs(title = "Publication timeline by author (1981-2000)",
+       subtitle = "Includes authors with at least two publications",
+       x = "Year", y = "Author") +
+  theme(axis.text.y = element_text(size = 10))
+
+htmltools::div(style = "width:100%; height:400px;",
+girafe(ggobj = p20, 
+       options = list(
+         opts_hover(css = "fill:orange;stroke:black;cursor:pointer;"),
+         opts_hover_inv(css = "opacity:0.2;"),
+         opts_toolbar(saveaspng = TRUE)
+       ),
+       width_svg = 10, height_svg = 8))
+```
+
+```{r}
+
+p19 <- df %>%
+  unnest(Authors) %>%
+  filter(Year >= 2001 & Year <= 2011) %>%
+  add_count(Authors, `School Subject`) %>%
+  filter(n >= 2) %>%
+  
+  
+  ggplot(aes(x = Year, 
+             y = reorder(Authors, Year), 
+             color = `School Subject`)) +
+  geom_point_interactive(aes(
+    tooltip = paste0("Author: ", Authors, "\n",
+                    "Year: ", Year, "\n",
+                    "Total in ", `School Subject`, ": ", n),
+    data_id = Authors 
+    
+  ), size = 4, alpha = 0.7) +
+  scale_x_continuous(breaks = seq(2001, 2011, by = 1)) +
+  theme_minimal() +
+  labs(title = "Publication timeline by author (2001-2011)",
+       subtitle = "Includes authors with at least two publications",
+       x = "Year", y = "Author") +
+  theme(axis.text.y = element_text(size = 10))
+
+htmltools::div(style = "width:100%; height:400px;",
+girafe(ggobj = p19, 
+       options = list(
+         opts_hover(css = "fill:orange;stroke:black;cursor:pointer;"),
+         opts_hover_inv(css = "opacity:0.2;"),
+         opts_toolbar(saveaspng = TRUE)
+       ),
+       width_svg = 10, height_svg = 8))
+```
+
+```{r}
+
+p18 <- df %>%
+  unnest(Authors) %>%
+  filter(Year >= 2012) %>%
+  add_count(Authors, `School Subject`) %>%
+  filter(n >= 2) %>%
+  ggplot(aes(x = Year, 
+             y = reorder(Authors, Year), 
+             color = `School Subject`)) +
+  geom_point_interactive(aes(
+    tooltip = paste0("Author: ", Authors, "\n",
+                    "Year: ", Year, "\n",
+                    "Total in ", `School Subject`, ": ", n),
+    data_id = Authors 
+  ), size = 4, alpha = 0.7) +
+  #scale_x_continuous(breaks = seq(2012, , by = 1)) + 
+  theme_minimal() +
+  labs(title = "Publication timeline by author (Since 2012)",
+       subtitle = "Includes authors with at least two publications",
+       x = "Year", y = "Author") +
+  theme(axis.text.y = element_text(size = 10))
+ htmltools::div(style = "width:100%; height:400px;",
+
+girafe(ggobj = p18, 
+       options = list(
+         opts_hover(css = "fill:orange;stroke:black;cursor:pointer;"),
+         opts_hover_inv(css = "opacity:0.2;"),
+         opts_toolbar(saveaspng = TRUE)
+       ),
+       width_svg = 10, height_svg = 8)) 
+```
