@@ -18,7 +18,7 @@ execute:
   message: false             
 ---
 
-#### [Gimena del Rio](gdelrio.riande@gmail.com) & [Romina De León](rdeleon@conicet.gov.ar)
+#### [Romina De León](rdeleon@conicet.gov.ar) & [Gimena del Rio](gdelrio.riande@gmail.com)
 
 #### ([HDLAB CONICET](https://hdlab.space/))
 
@@ -26,32 +26,32 @@ execute:
 
 ### Goals:
 
--   Download data from the [GLOTREC repository](https://itbc.gei.de/)
--   Standardize and export the dataset for exploration and analysis
--   Clean and prepare **GLOTREC** data related to **Argentine Textbooks**
--   Exploring data and relationship between:
-    -   Authors and Publisher
-    -   Publisher and School Subjects
-    -   Publisher, Authors, School Subjects
--   Work on similar visualizations as the ones that can be found nowadays in GLOTREC, though improved with a focus on specific periods.
+- Download data from the [GLOTREC repository](https://itbc.gei.de/)
+- Standardize and export the dataset for exploration and analysis
+- Clean and prepare **GLOTREC** data related to **Argentine Textbooks**
+- Exploring data and relationship between:
+  - Authors and Publisher
+  - Publisher and School Subjects
+  - Publisher, Authors, School Subjects
+- Work on similar visualizations as the ones that can be found nowadays in GLOTREC, though improved with a focus on specific periods.
 
 ### Libraries to use
 
 Description:
 
--   `tidyverse`: for data importing, cleaning, transformation, wrangling, and tabular representation; includes dplyr, tidyr, readr, purrr, stringr, and ggplot2.
+- `tidyverse`: for data importing, cleaning, transformation, wrangling, and tabular representation; includes dplyr, tidyr, readr, purrr, stringr, and ggplot2.
 
--   `stringr / stringi`: for text normalization, pattern detection, string manipulation, and removing diacritics.
+- `stringr / stringi`: for text normalization, pattern detection, string manipulation, and removing diacritics.
 
--   `ggplot2`: for statistical and exploratory data visualization.
+- `ggplot2`: for statistical and exploratory data visualization.
 
--   `treemapify`: for treemap visualizations integrated with ggplot2.
+- `treemapify`: for treemap visualizations integrated with ggplot2.
 
--   `igraph`: for analyzing network structures, computing centrality measures, clustering, and other graph-theoretic operations.
+- `igraph`: for analyzing network structures, computing centrality measures, clustering, and other graph-theoretic operations.
 
--   `readr`: for fast reading of CSV, TSV, and delimited files (also part of tidyverse).
+- `readr`: for fast reading of CSV, TSV, and delimited files (also part of tidyverse).
 
--   `maps`: for base map datasets (useful fallback for quick geospatial outlines).
+- `maps`: for base map datasets (useful fallback for quick geospatial outlines).
 
 ### Installation of packages if not already installed, and call of necessary libraries
 
@@ -106,9 +106,9 @@ df %>% sample_n(5) # show random rows
 
 ### Normalization of the **Publisher** column
 
--   Clean up spaces and convert to lowercase
--   Normalization publishers with a mapping dictionary
--   Apply normalization in **Publisher** column
+- Clean up spaces and convert to lowercase
+- Normalization publishers with a mapping dictionary
+- Apply normalization in **Publisher** column
 
 ```{r}
 df <- df %>%
